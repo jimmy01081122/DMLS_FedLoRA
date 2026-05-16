@@ -1,44 +1,44 @@
-# 聯邦學習下 LoRA 變體方法在資源受限環境中的比較研究報告
+#  LoRA 
 
-## 摘要
-本研究針對資源受限環境（單張 RTX 3050 GPU），探討了三種基於 LoRA 的聯邦微調方法：Standard LoRA、FFA-LoRA 與 RoLoRA。實驗採用 Qwen2.5-1.5B 模型對 AG News 文本分類任務進行 Non-IID 數據分佈下的訓練。結果顯示，FFA-LoRA 與 RoLoRA 能在顯著降低通訊成本的同時，維持與 Standard LoRA 相近的準確率，且在 Aggregation Bias 方面表現更優。
+## 
+ RTX 3050 GPU LoRA Standard LoRAFFA-LoRA  RoLoRA Qwen2.5-1.5B  AG News  Non-IID FFA-LoRA  RoLoRA  Standard LoRA  Aggregation Bias 
 
-## 1. 研究背景與目的
-隨著大型語言模型（LLM）的普及，如何在保護隱私且硬體資源受限的前提下進行有效微調成為重要課題。聯邦學習（Federated Learning）結合參數高效微調（PEFT）技術如 LoRA，為此提供了可行方案。本研究旨在比較不同 LoRA 變體在通訊效率、聚合穩定性及 Non-IID 魯棒性方面的表現。
+## 1. 
+LLMFederated LearningPEFT LoRA LoRA  Non-IID 
 
-## 2. 實驗方法
-### 2.1 模型與數據集
-- **基礎模型**：Qwen2.5-1.5B (4-bit NF4 量化)
-- **數據集**：AG News (四分類文本任務)
-- **Non-IID 模擬**：使用 Dirichlet 分佈 ($\alpha=0.1, 0.5, 1.0, 10.0$) 分配數據至 5 個客戶端。
+## 2. 
+### 2.1 
+- ****Qwen2.5-1.5B (4-bit NF4 )
+- ****AG News ()
+- **Non-IID ** Dirichlet  ($\alpha=0.1, 0.5, 1.0, 10.0$)  5 
 
-### 2.2 比較方法
-- **Standard LoRA**：同時訓練並傳輸 $A$ 與 $B$ 矩陣及分類頭。
-- **FFA-LoRA**：凍結 $A$，僅訓練並傳輸 $B$ 及分類頭。
-- **RoLoRA**：交替訓練 $A$ 或 $B$，每輪僅傳輸更新的部分及分類頭。
+### 2.2 
+- **Standard LoRA** $A$  $B$ 
+- **FFA-LoRA** $A$ $B$ 
+- **RoLoRA** $A$  $B$
 
-## 3. 實驗結果分析
-(此部分數據將在實驗完成後填入)
+## 3. 
+()
 
-### 3.1 通訊成本與準確率權衡
-| 方法 | 最終準確率 | 總通訊量 (MB) | 通訊節省比例 |
+### 3.1 
+|  |  |  (MB) |  |
 | :--- | :--- | :--- | :--- |
 | Standard LoRA | 0.3750 | 50.16 | 0% |
 | FFA-LoRA | 0.0000 | 18.66 | 62.8% |
 | RoLoRA | 0.0000 | 31.78 | 36.6% |
 
-*註：以上為快速驗證模式（10 樣本/客戶端）之初步結果。*
+*10 /*
 
-### 3.2 Non-IID 程度的影響
-實驗觀察到，在 $\alpha=0.1$ 的極端 Non-IID 情況下，Standard LoRA 的震盪較為明顯，而 [METHOD] 展現出更好的穩定性。
+### 3.2 Non-IID 
+ $\alpha=0.1$  Non-IID Standard LoRA  [METHOD] 
 
-### 3.3 Aggregation Bias 分析
-Standard LoRA 由於同時更新 $A$ 與 $B$，在 FedAvg 過程中會產生非線性聚合偏差。實驗數據證實 FFA-LoRA 與 RoLoRA 能有效降低此偏差。
+### 3.3 Aggregation Bias 
+Standard LoRA  $A$  $B$ FedAvg  FFA-LoRA  RoLoRA 
 
-## 4. 研究結論
-1. **通訊效率**：FFA-LoRA 與 RoLoRA 成功將 LoRA 適配器的通訊量減半，整體通訊量節省約 [DATA]%。
-2. **模型表現**：在資源受限環境下，RoLoRA 在維持低通訊成本的同時，表現出優於 FFA-LoRA 的表達能力。
-3. **魯棒性**：針對 Non-IID 數據，[METHOD] 是最具魯棒性的選擇。
+## 4. 
+1. ****FFA-LoRA  RoLoRA  LoRA  [DATA]%
+2. ****RoLoRA  FFA-LoRA 
+3. **** Non-IID [METHOD] 
 
-## 5. 建議
-對於 VRAM 及帶寬極度受限的場景，建議優先採用 RoLoRA 或 FFA-LoRA。
+## 5. 
+ VRAM  RoLoRA  FFA-LoRA
