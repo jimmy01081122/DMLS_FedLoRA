@@ -36,7 +36,7 @@ from sklearn.metrics import accuracy_score, f1_score
 
 class CONFIG:
     # Experiment Mode: "quick" or "full"
-    MODE = "quick" 
+    MODE = "full" 
     
     # Model & Data
     MODEL_NAME = "Qwen/Qwen2.5-1.5B"
@@ -46,15 +46,15 @@ class CONFIG:
     
     # Federated Learning
     NUM_CLIENTS = 5
-    CLIENTS_PER_ROUND = 3
-    GLOBAL_ROUNDS = 1
+    CLIENTS_PER_ROUND = 5
+    GLOBAL_ROUNDS = 10
     LOCAL_EPOCHS = 1
-    BATCH_SIZE = 1
-    GRAD_ACCUM_STEPS = 4
+    BATCH_SIZE = 4
+    GRAD_ACCUM_STEPS = 1
     LEARNING_RATE = 2e-4
     
     # Non-IID
-    ALPHA_VALUES = [0.5] # Dirichlet alpha
+    ALPHA_VALUES = [10.0, 1.0, 0.5, 0.1]
     
     # Methods to compare
     METHODS = ["standard_lora", "ffa_lora", "rolora"]
@@ -79,20 +79,15 @@ class CONFIG:
     CHECKPOINT_DIR = "checkpoints"
     RESULTS_DIR = "results"
     
-    # Sample Limits for Quick Mode
-    MAX_TRAIN_SAMPLES_PER_CLIENT = 10
-    MAX_EVAL_SAMPLES = 20
+    # Sample Limits
+    MAX_TRAIN_SAMPLES_PER_CLIENT = 500
+    MAX_EVAL_SAMPLES = 1000
     
     SEED = 42
 
 if CONFIG.MODE == "full":
-    CONFIG.ALPHA_VALUES = [10.0, 1.0, 0.5, 0.1]
-    CONFIG.GLOBAL_ROUNDS = 10
-    CONFIG.CLIENTS_PER_ROUND = 5
-    CONFIG.MAX_TRAIN_SAMPLES_PER_CLIENT = 1000
-    CONFIG.MAX_EVAL_SAMPLES = 2000
-    CONFIG.MAX_SEQ_LENGTH = 256
-    CONFIG.MAX_BIAS_LAYERS = 8
+    # These override if MODE is full, but we've balanced them above
+    pass
 
 # Create directories
 os.makedirs(CONFIG.CHECKPOINT_DIR, exist_ok=True)
