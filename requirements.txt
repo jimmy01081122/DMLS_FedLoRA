@@ -1,0 +1,11 @@
+transformers
+peft
+bitsandbytes
+datasets
+accelerate
+evaluate
+scikit-learn
+pandas
+matplotlib
+torch
+tensorboard
