@@ -36,7 +36,7 @@ from sklearn.metrics import accuracy_score, f1_score
 
 class CONFIG:
     # Experiment Mode: "quick" or "full"
-    MODE = "quick" 
+    MODE = "full" 
     
     # Model & Data
     MODEL_NAME = "Qwen/Qwen2.5-1.5B"
@@ -51,7 +51,7 @@ class CONFIG:
     LOCAL_EPOCHS = 1
     BATCH_SIZE = 4
     GRAD_ACCUM_STEPS = 1
-    LEARNING_RATE = 2e-4
+    LEARNING_RATE = 5e-5
     
     # Non-IID
     ALPHA_VALUES = [10.0, 0.5, 0.1]
@@ -90,7 +90,7 @@ if CONFIG.MODE == "quick":
     CONFIG.GLOBAL_ROUNDS = 1
     CONFIG.CLIENTS_PER_ROUND = 3
     CONFIG.MAX_TRAIN_SAMPLES_PER_CLIENT = 10
-    CONFIG.MAX_EVAL_SAMPLES = 20
+    CONFIG.MAX_EVAL_SAMPLES = 32 # Small multiple of batch size
 
 # Create directories
 os.makedirs(CONFIG.CHECKPOINT_DIR, exist_ok=True)
@@ -213,10 +213,12 @@ def apply_lora(model):
     
     model = get_peft_model(model, lora_config)
     
-    # Ensure classification head is trainable
+    # [FIX 3] Initialize classification head properly to avoid insane initial loss
     for name, param in model.named_parameters():
         if is_classification_head(name):
             param.requires_grad = True
+            torch.nn.init.normal_(param, mean=0.0, std=0.01)
+            print(f"Initialized {name} with small weights.")
             
     return model
 
@@ -245,11 +247,11 @@ def set_requires_grad(model, method, round_idx):
                 # Only train lora_B
                 param.requires_grad = "lora_B" in name
             elif method == "rolora":
-                # Odd rounds: train A, Even rounds: train B (1-indexed round_idx)
+                # [FIX 4] Start with lora_B in round 1 to avoid zero gradient if B is all-zero
                 if round_idx % 2 != 0:
-                    param.requires_grad = "lora_A" in name
-                else:
                     param.requires_grad = "lora_B" in name
+                else:
+                    param.requires_grad = "lora_A" in name
         elif is_classification_head(name):
             param.requires_grad = True
         else:
@@ -266,9 +268,9 @@ def should_transmit_param(name, method, round_idx):
             return "lora_B" in name
         elif method == "rolora":
             if round_idx % 2 != 0:
-                return "lora_A" in name
-            else:
                 return "lora_B" in name
+            else:
+                return "lora_A" in name
     return False
 
 # ==================================================
@@ -319,9 +321,6 @@ def calculate_communication_cost(state_dict):
     head_bytes = 0
     
     for name, param in state_dict.items():
-        # Use bits to determine size
-        # Most params in LoRA/head will be float16 or float32
-        # BitsAndBytes might have some 4-bit stuff but LoRA adapters are usually float16/32
         element_size = 2 if param.dtype == torch.float16 or param.dtype == torch.bfloat16 else 4
         param_bytes = param.numel() * element_size
         total_bytes += param_bytes
@@ -347,41 +346,30 @@ def calculate_communication_cost(state_dict):
 
 def calculate_aggregation_bias(client_states, global_state, method, round_idx):
     """Calculate Aggregation Bias layer-by-layer to save memory."""
-    # Only relevant for LoRA layers
-    # Delta W_k = B_k @ A_k
-    # Bias = || avg(B_k @ A_k) - B_avg @ A_avg ||_F / || avg(B_k @ A_k) ||_F
-    
     bias_values = []
     
-    # Identify LoRA layers
     lora_layers = []
-    # Use global state or client state to find layer names
     sample_state = client_states[0]
     for name in sample_state.keys():
         if "lora_A" in name:
-            layer_base = name.replace("lora_A.weight", "")
+            layer_base = name.replace("lora_A.default.weight", "")
             if layer_base not in lora_layers:
                 lora_layers.append(layer_base)
             
     if CONFIG.BIAS_MODE == "sampled_layers":
         random.seed(CONFIG.SEED)
         if len(lora_layers) > CONFIG.MAX_BIAS_LAYERS:
-            lora_layers = sorted(lora_layers) # Sort for deterministic sampling
+            lora_layers = sorted(lora_layers)
             indices = np.linspace(0, len(lora_layers)-1, CONFIG.MAX_BIAS_LAYERS).astype(int)
             lora_layers = [lora_layers[i] for i in indices]
 
     for layer in lora_layers:
-        a_key = layer + "lora_A.weight"
-        b_key = layer + "lora_B.weight"
+        a_key = layer + "lora_A.default.weight"
+        b_key = layer + "lora_B.default.weight"
         
-        # Check if keys exist in client states (RoLoRA might only have one)
         if a_key not in client_states[0] or b_key not in client_states[0]:
-            # For RoLoRA or FFA-LoRA, we need the other part from somewhere else
-            # But the bias is specifically about the aggregation of BOTH.
-            # If one is fixed, Bias is 0.
             continue
             
-        # Calculate Delta W_ideal = average(B_k @ A_k)
         num_clients = len(client_states)
         delta_w_sum = None
         
@@ -399,7 +387,6 @@ def calculate_aggregation_bias(client_states, global_state, method, round_idx):
         
         delta_w_ideal = delta_w_sum / num_clients
         
-        # Calculate Delta W_fedavg = B_avg @ A_avg
         if a_key in global_state and b_key in global_state:
             A_avg = global_state[a_key].to(torch.float32)
             B_avg = global_state[b_key].to(torch.float32)
@@ -423,11 +410,9 @@ def local_train(model, train_dataset, method, round_idx):
     """Train the model locally for a client."""
     set_requires_grad(model, method, round_idx)
     
-    # Re-initialize optimizer for each client as per requirement
     trainable_params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.AdamW(trainable_params, lr=CONFIG.LEARNING_RATE)
     
-    # DataLoader
     tokenizer = AutoTokenizer.from_pretrained(CONFIG.MODEL_NAME)
     if tokenizer.pad_token is None: tokenizer.pad_token = tokenizer.eos_token
     
@@ -447,6 +432,11 @@ def local_train(model, train_dataset, method, round_idx):
         batch = {k: v.to(model.device) for k, v in batch.items()}
         outputs = model(**batch)
         loss = outputs.loss / CONFIG.GRAD_ACCUM_STEPS
+        
+        # [DEBUG] Check for NaN loss
+        if torch.isnan(loss):
+            print("  [WARNING] NaN loss detected in local train!")
+            
         loss.backward()
         
         if (step + 1) % CONFIG.GRAD_ACCUM_STEPS == 0:
@@ -520,7 +510,6 @@ def save_checkpoint(method, alpha, round_idx, global_state, metrics, comm_logs, 
         "seed": CONFIG.SEED
     }
     torch.save(checkpoint, ckpt_path)
-    # print(f"Checkpoint saved: {ckpt_path}")
 
 def load_checkpoint(path):
     return torch.load(path)
@@ -564,6 +553,9 @@ def run_experiment():
             for r in range(1, CONFIG.GLOBAL_ROUNDS + 1):
                 print(f"Global Round {r}/{CONFIG.GLOBAL_ROUNDS}")
                 
+                # Save current global state BEFORE client loop
+                current_global_state = extract_transmitted_state(model, "standard_lora", r)
+                
                 # Select clients
                 selected_clients = random.sample(range(CONFIG.NUM_CLIENTS), CONFIG.CLIENTS_PER_ROUND)
                 client_states = []
@@ -573,13 +565,19 @@ def run_experiment():
                 
                 for client_id in selected_clients:
                     print(f"  Training Client {client_id}...")
+                    
+                    # Reload global state before each client
+                    load_global_state(model, current_global_state)
+                    
                     # Create client dataset
                     indices = client_indices[client_id]
                     indices = indices[:CONFIG.MAX_TRAIN_SAMPLES_PER_CLIENT]
                     client_dataset = Subset(tokenized_datasets["train"], indices)
                     
                     # Local Train
-                    local_train(model, client_dataset, method, r)
+                    client_loss = local_train(model, client_dataset, method, r)
+                    if r == 1:
+                        print(f"    Client Loss: {client_loss:.4f}")
                     
                     # Extract state
                     state = extract_transmitted_state(model, method, r)
@@ -589,30 +587,6 @@ def run_experiment():
                     # Calculate comm for this client (upload)
                     cost = calculate_communication_cost(state)
                     round_comm_mb += cost["total_mb"]
-                    
-                    # RESET MODEL to global state before next client (sequential simulation)
-                    if r > 1 or len(client_states) > 1:
-                        # Load previous global state or initial state
-                        # In the first round, first client, it's already initial.
-                        # For subsequent clients in the same round, we must revert.
-                        pass # Actually we aggregate at the end, so we need to reload global state
-                    
-                    # For sequential simulation without multiple models:
-                    # We need to RELOAD the global model before each client's training
-                    # so they all start from the same point.
-                    if r == 1 and len(client_states) == 1:
-                        # Save the very first global state (initial)
-                        initial_state = extract_transmitted_state(model, "standard_lora", 1) 
-                    
-                    # To be strict:
-                    if len(client_states) > 0:
-                         # Re-load global state (either from previous round or initial)
-                         # This is tricky because we just trained. 
-                         # Let's save the current global state at start of round.
-                         if client_id == selected_clients[0]:
-                             current_global_state = extract_transmitted_state(model, "standard_lora", r)
-                         
-                         load_global_state(model, current_global_state)
 
                 # FedAvg
                 global_state = fedavg_states(client_states, client_sizes)
@@ -655,6 +629,7 @@ def run_experiment():
                 "alpha": alpha,
                 "final_acc": acc,
                 "final_f1": f1,
+                "final_loss": loss,
                 "best_acc": max(m["acc"] for m in metrics_history),
                 "best_f1": max(m["f1"] for m in metrics_history),
                 "total_comm_mb": cumulative_comm,
@@ -679,8 +654,6 @@ def run_experiment():
 # ==================================================
 
 def plot_results(results_dir):
-    # This is a placeholder for plotting logic
-    # In a real scenario, we'd read the CSVs and plot
     pass
 
 if __name__ == "__main__":
