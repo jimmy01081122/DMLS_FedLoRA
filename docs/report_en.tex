@@ -45,9 +45,9 @@ We employ Qwen2.5-1.5B with 4-bit NF4 quantization. The task is a 4-class sequen
 \toprule
 Method & Accuracy & Comm (MB) & Savings \\
 \midrule
-Standard LoRA & 0.8803 & 250.78 & 0\% \\
-FFA-LoRA & 0.2500 & 93.28 & 62.8\% \\
-RoLoRA & 0.2500 & 132.66 & 47.1\% \\
+Standard LoRA & 0.8753 & 250.78 & 0\% \\
+FFA-LoRA & 0.8380 & 93.28 & 62.8\% \\
+RoLoRA & 0.8539 & 119.53 &  52.3\% \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -56,7 +56,7 @@ RoLoRA & 0.2500 & 132.66 & 47.1\% \\
 We compared "Quick Mode" (10 samples/round) and "Balanced Mode" (300 samples/round):
 \begin{itemize}
     \item \textbf{Low Data (10 samples)}: All methods failed to converge, showing random accuracy (~25\%).
-    \item \textbf{Moderate Data (300 samples)}: Standard LoRA reached 88\% accuracy within only 5 global rounds.
+    \item \textbf{Moderate Data (300 samples)}: Standard LoRA reached 87.53\% accuracy within only 5 global rounds.
 \end{itemize}
 
 \section{Conclusion}
