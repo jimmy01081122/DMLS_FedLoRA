@@ -7,6 +7,7 @@ import torch
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import bitsandbytes as bnb
 from tqdm import tqdm
 from datetime import datetime
 
@@ -49,9 +50,18 @@ class CONFIG:
     CLIENTS_PER_ROUND = 3
     GLOBAL_ROUNDS = 5
     LOCAL_EPOCHS = 1
-    BATCH_SIZE = 4
-    GRAD_ACCUM_STEPS = 1
+    BATCH_SIZE = 1           # [REQ] Restricted VRAM
+    GRAD_ACCUM_STEPS = 4     # [REQ] Effective batch size 4
     LEARNING_RATE = 5e-5
+    
+    # Phase 1: FedProx
+    MU = 0.01                # [REQ] Proximal term weight
+    
+    # Phase 2: System Robustness
+    CLIENT_DROPOUT_RATE = 0.2 # [REQ] 20% failure rate
+    
+    # Phase 3: Dynamic Rank (Assigned in training loop)
+    HETEROGENEOUS_RANKS = [4, 4, 8, 8, 8] # Rank for each client
     
     # Non-IID
     ALPHA_VALUES = [10.0, 0.5, 0.1]
@@ -65,7 +75,7 @@ class CONFIG:
     BNB_4BIT_COMPUTE_DTYPE = torch.float16
     BNB_4BIT_USE_DOUBLE_QUANT = True
     
-    # LoRA
+    # LoRA (Default, will be overridden for dynamic rank)
     LORA_R = 8
     LORA_ALPHA = 16
     LORA_DROPOUT = 0.05
@@ -78,6 +88,7 @@ class CONFIG:
     # Checkpointing
     CHECKPOINT_DIR = "checkpoints"
     RESULTS_DIR = "results"
+    LOGS_DIR = "logs"
     
     # Sample Limits
     MAX_TRAIN_SAMPLES_PER_CLIENT = 300
@@ -90,11 +101,12 @@ if CONFIG.MODE == "quick":
     CONFIG.GLOBAL_ROUNDS = 1
     CONFIG.CLIENTS_PER_ROUND = 3
     CONFIG.MAX_TRAIN_SAMPLES_PER_CLIENT = 10
-    CONFIG.MAX_EVAL_SAMPLES = 32 # Small multiple of batch size
+    CONFIG.MAX_EVAL_SAMPLES = 32
 
 # Create directories
 os.makedirs(CONFIG.CHECKPOINT_DIR, exist_ok=True)
 os.makedirs(CONFIG.RESULTS_DIR, exist_ok=True)
+os.makedirs(CONFIG.LOGS_DIR, exist_ok=True)
 
 # Set seeds
 def set_seed(seed):
@@ -200,10 +212,12 @@ def load_base_model():
     
     return model
 
-def apply_lora(model):
+def apply_lora(model, rank=None):
     """Apply LoRA configuration to the model."""
+    r_val = rank if rank is not None else CONFIG.LORA_R
+    
     lora_config = LoraConfig(
-        r=CONFIG.LORA_R,
+        r=r_val,
         lora_alpha=CONFIG.LORA_ALPHA,
         target_modules=CONFIG.TARGET_MODULES,
         lora_dropout=CONFIG.LORA_DROPOUT,
@@ -286,27 +300,70 @@ def extract_transmitted_state(model, method, round_idx):
     return state_dict
 
 def load_global_state(model, global_state):
-    """Load aggregated global state back into the model."""
+    """Load aggregated global state back into the model, handling shape mismatches (subsetting)."""
     model_state = model.state_dict()
     for name, param in global_state.items():
         if name in model_state:
-            model_state[name].copy_(param)
+            target_param = model_state[name]
+            if target_param.shape == param.shape:
+                target_param.copy_(param)
+            else:
+                # [REQ] Subsetting for heterogeneous ranks
+                # If global is larger (e.g. r=8) and local is smaller (e.g. r=4)
+                slices = tuple(slice(0, min(s_target, s_src)) for s_target, s_src in zip(target_param.shape, param.shape))
+                target_param.copy_(param[slices])
+                
     model.load_state_dict(model_state, strict=False)
 
-def fedavg_states(client_states, client_sizes):
-    """Perform weighted FedAvg on the client states on CPU."""
+def fedavg_heterogeneous_states(client_states, client_sizes):
+    """Perform weighted FedAvg with Zero-padding for heterogeneous LoRA ranks."""
     total_samples = sum(client_sizes)
     weights = [n / total_samples for n in client_sizes]
     
+    # Identify all unique keys across all participating clients
+    all_keys = set()
+    for state in client_states:
+        all_keys.update(state.keys())
+        
     global_state = {}
-    # Use the keys from the first client
-    keys = client_states[0].keys()
     
-    for key in keys:
-        global_state[key] = torch.zeros_like(client_states[0][key])
-        for i in range(len(client_states)):
-            global_state[key] += weights[i] * client_states[i][key]
+    for key in all_keys:
+        # Find the maximum shape for this parameter across all clients
+        max_shape = None
+        for state in client_states:
+            if key in state:
+                curr_shape = state[key].shape
+                if max_shape is None:
+                    max_shape = list(curr_shape)
+                else:
+                    for i in range(len(max_shape)):
+                        max_shape[i] = max(max_shape[i], curr_shape[i])
+        
+        # Initialize global tensor with max shape on CPU
+        global_state[key] = torch.zeros(max_shape, dtype=torch.float32)
+        
+        for i, state in enumerate(client_states):
+            if key not in state:
+                continue
+                
+            param = state[key].to(torch.float32)
+            curr_shape = param.shape
             
+            if list(curr_shape) == max_shape:
+                global_state[key] += weights[i] * param
+            else:
+                # [REQ] Zero-padding mechanism
+                # Create a slice object to insert the smaller tensor into the larger one
+                slices = tuple(slice(0, s) for s in curr_shape)
+                padded_param = torch.zeros(max_shape, dtype=torch.float32)
+                padded_param[slices] = param
+                global_state[key] += weights[i] * padded_param
+                del padded_param
+            
+            del param
+            
+    # Convert back to float16 to match model compute dtype if needed, 
+    # but we usually keep global_state in float32 for aggregation stability.
     return global_state
 
 # ==================================================
@@ -406,12 +463,14 @@ def calculate_aggregation_bias(client_states, global_state, method, round_idx):
 # PHASE 14 & 15: TRAINING & EVALUATION
 # ==================================================
 
-def local_train(model, train_dataset, method, round_idx):
-    """Train the model locally for a client."""
+def local_train_fedprox(model, train_dataset, method, round_idx, global_state, mu=0.01):
+    """Train the model locally with FedProx (L2 penalty)."""
     set_requires_grad(model, method, round_idx)
     
     trainable_params = [p for p in model.parameters() if p.requires_grad]
-    optimizer = torch.optim.AdamW(trainable_params, lr=CONFIG.LEARNING_RATE)
+    
+    # [REQ] Use bitsandbytes PagedAdamW8bit for VRAM saving
+    optimizer = bnb.optim.PagedAdamW8bit(trainable_params, lr=CONFIG.LEARNING_RATE)
     
     tokenizer = AutoTokenizer.from_pretrained(CONFIG.MODEL_NAME)
     if tokenizer.pad_token is None: tokenizer.pad_token = tokenizer.eos_token
@@ -427,13 +486,34 @@ def local_train(model, train_dataset, method, round_idx):
     total_loss = 0
     
     optimizer.zero_grad()
-    actual_steps = 0
     for step, batch in enumerate(train_loader):
         batch = {k: v.to(model.device) for k, v in batch.items()}
         outputs = model(**batch)
-        loss = outputs.loss / CONFIG.GRAD_ACCUM_STEPS
         
-        # [DEBUG] Check for NaN loss
+        # Base loss
+        loss = outputs.loss
+        
+        # [REQ] FedProx L2 Penalty with strict VRAM management
+        if mu > 0 and global_state is not None:
+            proximal_term = 0.0
+            for name, param in model.named_parameters():
+                if param.requires_grad and name in global_state:
+                    # Move global param to GPU temporarily
+                    global_param = global_state[name].to(model.device)
+                    
+                    if param.shape == global_param.shape:
+                        proximal_term += (param - global_param).pow(2).sum()
+                    else:
+                        # [REQ] Handle heterogeneous ranks in FedProx penalty
+                        slices = tuple(slice(0, min(s_target, s_src)) for s_target, s_src in zip(param.shape, global_param.shape))
+                        proximal_term += (param - global_param[slices]).pow(2).sum()
+                        
+                    del global_param # [REQ] Immediate release
+            
+            loss += (mu / 2) * proximal_term
+            
+        loss = loss / CONFIG.GRAD_ACCUM_STEPS
+        
         if torch.isnan(loss):
             print("  [WARNING] NaN loss detected in local train!")
             
@@ -442,7 +522,6 @@ def local_train(model, train_dataset, method, round_idx):
         if (step + 1) % CONFIG.GRAD_ACCUM_STEPS == 0:
             optimizer.step()
             optimizer.zero_grad()
-            actual_steps += 1
             
         total_loss += loss.item() * CONFIG.GRAD_ACCUM_STEPS
         
@@ -539,22 +618,35 @@ def run_experiment():
             
             # Reset model for each method/alpha
             base_model = load_base_model()
-            model = apply_lora(base_model)
             
             metrics_history = []
             comm_history = []
             bias_history = []
             cumulative_comm = 0
             
-            # Initial evaluation
-            acc, f1, loss = evaluate_model(model, tokenized_datasets["test"], tokenizer)
+            # Initial evaluation (use a temporary model with max rank)
+            max_rank = max(CONFIG.HETEROGENEOUS_RANKS)
+            eval_model = apply_lora(copy.deepcopy(base_model), rank=max_rank)
+            acc, f1, loss = evaluate_model(eval_model, tokenized_datasets["test"], tokenizer)
             print(f"Initial - Acc: {acc:.4f}, F1: {f1:.4f}, Loss: {loss:.4f}")
+            del eval_model
+            gc.collect()
+            torch.cuda.empty_cache()
             
             for r in range(1, CONFIG.GLOBAL_ROUNDS + 1):
                 print(f"Global Round {r}/{CONFIG.GLOBAL_ROUNDS}")
                 
+                # Global model always has the max rank to accommodate all updates
+                max_rank = max(CONFIG.HETEROGENEOUS_RANKS)
+                
                 # Save current global state BEFORE client loop
-                current_global_state = extract_transmitted_state(model, "standard_lora", r)
+                # We need a dummy model with max_rank to extract the initial state if r=1
+                if r == 1:
+                    temp_model = apply_lora(copy.deepcopy(base_model), rank=max_rank)
+                    current_global_state = extract_transmitted_state(temp_model, "standard_lora", r)
+                    del temp_model
+                    gc.collect()
+                    torch.cuda.empty_cache()
                 
                 # Select clients
                 selected_clients = random.sample(range(CONFIG.NUM_CLIENTS), CONFIG.CLIENTS_PER_ROUND)
@@ -562,45 +654,66 @@ def run_experiment():
                 client_sizes = []
                 
                 round_comm_mb = 0
+                successful_clients = 0
                 
                 for client_id in selected_clients:
-                    print(f"  Training Client {client_id}...")
+                    # [REQ] Phase 2: Client Dropout Mechanism
+                    if random.random() < CONFIG.CLIENT_DROPOUT_RATE:
+                        print(f"  [DROPOUT] Client {client_id} failed to upload updates.")
+                        continue
+                        
+                    print(f"  Training Client {client_id} (Rank={CONFIG.HETEROGENEOUS_RANKS[client_id]})...")
                     
-                    # Reload global state before each client
-                    load_global_state(model, current_global_state)
+                    # [REQ] Phase 3: Dynamic Rank Allocation
+                    client_rank = CONFIG.HETEROGENEOUS_RANKS[client_id]
+                    client_model = apply_lora(copy.deepcopy(base_model), rank=client_rank)
+                    
+                    # Reload global state (subsetting)
+                    load_global_state(client_model, current_global_state)
                     
                     # Create client dataset
                     indices = client_indices[client_id]
                     indices = indices[:CONFIG.MAX_TRAIN_SAMPLES_PER_CLIENT]
                     client_dataset = Subset(tokenized_datasets["train"], indices)
                     
-                    # Local Train
-                    client_loss = local_train(model, client_dataset, method, r)
+                    # [REQ] Phase 1: Local Train with FedProx
+                    client_loss = local_train_fedprox(client_model, client_dataset, method, r, current_global_state, mu=CONFIG.MU)
                     if r == 1:
                         print(f"    Client Loss: {client_loss:.4f}")
                     
                     # Extract state
-                    state = extract_transmitted_state(model, method, r)
+                    state = extract_transmitted_state(client_model, method, r)
                     client_states.append(state)
                     client_sizes.append(len(indices))
                     
                     # Calculate comm for this client (upload)
                     cost = calculate_communication_cost(state)
                     round_comm_mb += cost["total_mb"]
+                    successful_clients += 1
+                    
+                    # Cleanup client model immediately [REQ] VRAM safety
+                    del client_model
+                    gc.collect()
+                    torch.cuda.empty_cache()
 
-                # FedAvg
-                global_state = fedavg_states(client_states, client_sizes)
+                if not client_states:
+                    print(f"  [WARNING] No clients successful in round {r}. Skipping aggregation.")
+                    continue
+
+                # [REQ] Phase 3: Heterogeneous Aggregation with Zero-padding
+                global_state = fedavg_heterogeneous_states(client_states, client_sizes)
                 
                 # Calculate bias (before updating model with new global state)
                 bias = calculate_aggregation_bias(client_states, global_state, method, r)
                 bias_history.append({"round": r, "bias": bias})
                 
-                # Update global model
-                load_global_state(model, global_state)
+                # Prepare a global model with max rank for evaluation
+                eval_model = apply_lora(copy.deepcopy(base_model), rank=max_rank)
+                load_global_state(eval_model, global_state)
                 
                 # Download cost (server to all clients)
                 cost_down = calculate_communication_cost(global_state)
-                round_comm_mb += cost_down["total_mb"] * len(selected_clients)
+                round_comm_mb += cost_down["total_mb"] * successful_clients
                 
                 cumulative_comm += round_comm_mb
                 comm_history.append({
@@ -613,15 +726,23 @@ def run_experiment():
                 })
                 
                 # Global Evaluation
-                acc, f1, loss = evaluate_model(model, tokenized_datasets["test"], tokenizer)
+                acc, f1, loss = evaluate_model(eval_model, tokenized_datasets["test"], tokenizer)
                 print(f"Round {r} - Acc: {acc:.4f}, F1: {f1:.4f}, Loss: {loss:.4f}, Comm: {round_comm_mb:.2f}MB, Bias: {bias:.6f}")
                 
                 metrics_history.append({
                     "round": r, "acc": acc, "f1": f1, "loss": loss
                 })
                 
+                # Update current global state for next round
+                current_global_state = global_state
+                
                 # Save Checkpoint
                 save_checkpoint(method, alpha, r, global_state, metrics_history, comm_history, bias_history)
+                
+                # Cleanup eval model
+                del eval_model
+                gc.collect()
+                torch.cuda.empty_cache()
                 
             # Final Results for this method
             res = {
@@ -638,7 +759,7 @@ def run_experiment():
             results_all.append(res)
             
             # Cleanup for next method
-            del model, base_model
+            del base_model
             gc.collect()
             torch.cuda.empty_cache()
             
