@@ -1,73 +1,57 @@
-# LoRA-based Federated Fine-tuning Comparative Study
+# Federated LoRA: Robust Fine-tuning in Heterogeneous Networks
 
-This project explores and compares three LoRA (Low-Rank Adaptation) variants in a Federated Learning (FL) context, specifically optimized for resource-constrained environments like a single NVIDIA RTX 3050 GPU (6GB VRAM).
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/release/python-3100/)
+[![VRAM 6GB](https://img.shields.io/badge/VRAM-6GB-green.svg)](https://www.nvidia.com/en-us/geforce/graphics-cards/30-series/rtx-3050/)
 
-##  Overview
+This project investigates the performance, robustness, and efficiency of various **LoRA-based Federated Fine-tuning** methods under extreme resource constraints and data heterogeneity.
 
-The goal is to evaluate the performance, communication cost, and aggregation stability of different PEFT (Parameter-Efficient Fine-Tuning) methods under Non-IID data distributions using the **Qwen2.5-1.5B** model and the **AG News** dataset.
+## 🚀 Key Features
+- **LoRA Variants**: Implements Standard LoRA, FFA-LoRA (Frozen-A), and RoLoRA (Rotating).
+- **Robustness Suite**: 
+    - **FedProx**: Memory-efficient L2 regularization for Non-IID data.
+    - **Client Dropout**: Simulates 20% network failure rate.
+    - **Dynamic Rank**: Supports heterogeneous clients ($r=4$ vs $r=8$) via **Zero-padding aggregation**.
+- **Hardware Optimization**: Designed for **RTX 3050 (6GB)** using 4-bit NF4 quantization and `PagedAdamW8bit`.
 
-### Compared Methods:
-1.  **Standard LoRA**: Full updates and transmission of $A$ and $B$ matrices.
-2.  **FFA-LoRA (Frozen-A)**: Freezes matrix $A$ after initialization; only $B$ is trained and transmitted.
-3.  **RoLoRA (Rotating LoRA)**: Alternates training between $A$ and $B$ across rounds to reduce per-round communication.
-### Quick mode
+## 📊 Quick Results (Alpha=10.0)
+| Method | Accuracy | Comm Savings | Aggregation Bias |
+| :--- | :--- | :--- | :--- |
+| **Standard LoRA** | 85.46% | 0% | ~0.1 |
+| **FFA-LoRA** | 81.78% | **62.8%** | **0.00** |
+| **RoLoRA** | 80.91% | **52.3%** | **0.00** |
 
-| 方法 | Final Acc | Final Loss | Total Comm | 
-| :--- | :--- | :--- | :--- | 
-| Standard LoRA | 0.1875  | 1.5853 | 50.16 MB | 
-| FFA-LoRA | 0.6250 |1.0208 | 18.66 MB| 
-| RoLoRA | 0.2188  | 2.0257 | 18.66 MB |
-### Full mode
-| 方法 | Final Acc | Final Loss | Total Comm | 節省比例 |
-| :--- | :--- | :--- | :--- | :--- |
-| Standard LoRA | 0.8753 | 0.3622 | 250.78 | 0% |
-| FFA-LoRA | 0.8380 | 0.4637 | 93.28 | 62.8% |
-| RoLoRA | 0.8539 | 0.4192 | 119.53 | 52.3% |
+> **Note**: Accuracy significantly degrades in extreme Non-IID scenarios ($\alpha=0.1$) due to inherent **Client Drift**, highlighting the need for advanced drift-correction in edge networks.
 
-##  Key Features
-
-*   **4-bit Quantization**: Uses `bitsandbytes` (NF4) to fit large models in 6GB VRAM.
-*   **Sequential Client Simulation**: Mimics a multi-client FL environment on a single GPU.
-*   **Non-IID Simulation**: Implements Dirichlet distribution split ($\alpha \in \{10.0, 0.5, 0.1\}$).
-*   **Memory-Efficient Analytics**: Layer-by-layer **Aggregation Bias** calculation to prevent OOM errors.
-*   **Reporting**: Both academic LaTeX (English) and general Markdown (Chinese) reports.
-
-##  Project Structure
-
-```text
-.
- docs/               # Research reports and original prompt
- src/                # Core Python scripts (FL loop, plotting)
- results/            # Training logs, CSVs, and generated charts
- checkpoints/        # Model adapter weights per round
- Makefile            # One-click automation commands
- requirements.txt    # Dependency list
-```
-
-##  Quick Start
-
+## 🛠️ Getting Started
 ### 1. Installation
-Ensure you have Python 3.10+ and CUDA 12.x installed.
 ```bash
-make install
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
 ```
 
-### 2. Run Experiment
-The default configuration is set to `full` research mode.
+### 2. Run Research
 ```bash
-make run
+# Main experiment
+python3 src/main.py
+
+# Generate report-ready plots
+python3 src/plot_results.py
 ```
 
-### 3. Generate Charts
-After the experiment completes, visualize the results:
-```bash
-make plot
-```
+## 📂 Project Structure
+- `src/main.py`: Core FL framework and PEFT logic.
+- `src/plot_results.py`: Visualization suite.
+- `docs/`: Academic reports (LaTeX/Markdown).
+- `results/`: CSVs and analytical charts.
+- `checkpoints/`: Model states for reproducibility.
 
-##  Hardware Constraints & Optimizations
+## 📜 Documentation
+For a detailed mathematical framework and analysis, please refer to:
+- [English Academic Report (LaTeX)](docs/report_en.tex)
+- [Chinese Research Report (Markdown)](docs/report_zh.md)
+- [Verification Guide (SUMMARY.md)](SUMMARY.md)
 
-This project is specifically tuned for the **NVIDIA RTX 3050 (6GB)**:
-*   **Memory**: NF4 quantization + Gradient Checkpointing + Sequential Processing.
-*   **Speed**: Optimized batch sizes and gradient accumulation steps.
-
-
+## ⚖️ License
+This project is licensed under the MIT License.

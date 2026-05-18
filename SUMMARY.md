@@ -14,10 +14,10 @@ The experiment successfully compared **Standard LoRA**, **FFA-LoRA**, and **RoLo
     - Standard LoRA: ~0.1 (Non-zero).
     - FFA/RoLoRA: **0.0000** (Mathematically eliminated).
 
-### 1.2 Robustness Observations
-- **FedProx**: Effectively stabilized training in high Non-IID scenarios ($\alpha=0.1$).
-- **Heterogeneous Rank**: Successfully aggregated $r=4$ and $r=8$ clients using Zero-padding without performance degradation.
-- **Dropout Resilience**: RoLoRA demonstrated higher stability in learning curves despite missing client updates.
+### 1.3 The Non-IID Challenge
+- **Observation**: Accuracy drops significantly when $\alpha \le 0.5$.
+- **Reasoning**: This is primarily due to **Client Drift** and **Classification Head conflict**. In extreme scenarios, local updates are mutually exclusive, leading to information washout during aggregation.
+- **Recommendation**: Future audits should increase `GLOBAL_ROUNDS` to 50+ or implement drift-correction algorithms like **SCAFFOLD**.
 
 ## 2. Reproduction & Verification Guide
 To verify the results and system robustness:

@@ -105,9 +105,17 @@ FFA-LoRA achieved a 62.8\% reduction in communication volume by only updating th
 The aggregation bias in Standard LoRA remained non-zero ($\sim$0.1), confirming the theoretical prediction that updating both $A$ and $B$ simultaneously introduces non-linear errors during Federated Averaging. FFA-LoRA and RoLoRA successfully maintained a bias of exactly 0.0000, ensuring mathematical consistency in the aggregation step.
 
 \section{Discussion}
-The results highlight a clear Pareto front where RoLoRA provides an optimal balance between communication cost and model capacity, particularly in heterogeneous environments. The robustness to client dropout was observed across all methods, but the single-sided update variants (FFA and RoLoRA) appeared more resilient to partial information loss, likely due to their reduced parameter search space per round.
+The results highlight a clear Pareto front where RoLoRA provides an optimal balance between communication cost and model capacity. However, the most striking observation is the precipitous drop in accuracy as $\alpha$ decreases from 10.0 to 0.1.
 
-The significant drop in performance at $\alpha=0.1$ suggests that while PEFT methods are efficient, they require higher samples or more sophisticated local optimization to handle extreme label skew in federated settings. Furthermore, the 4-bit quantization did not hinder the ability to observe these algorithmic differences, confirming the viability of the RTX 3050 for high-fidelity federated learning research.
+\subsection{Analysis of Performance Degradation in Non-IID Scenarios}
+The sharp decline in performance under extreme data heterogeneity ($\alpha=0.1$) can be attributed to several factors:
+\begin{enumerate}
+    \item \textbf{Client Drift}: In the $\alpha=0.1$ case, clients possess highly skewed label distributions. Local updates move weights toward local optima that are mutually exclusive, causing the global model to converge to a region of high loss after FedAvg.
+    \item \textbf{Classification Head Conflict}: Since the classification head is fully updated, it suffers from severe "negative bias" for missing classes on each client, leading to a "tug-of-war" in the weight space during aggregation.
+    \item \textbf{Convergence Rate}: High heterogeneity significantly slows down convergence. While 5 rounds suffice for IID data, Non-IID scenarios likely require 50-100 rounds to establish a stable global consensus.
+\end{enumerate}
+
+The findings suggest that while PEFT methods are efficient, they must be paired with drift-correction algorithms (e.g., SCAFFOLD) or personalized FL strategies to maintain utility in real-world heterogeneous networks.
 
 \section{Conclusion}
 This study demonstrates that LLM-based federated fine-tuning is robustly achievable on consumer-grade hardware. By integrating FedProx and heterogeneous aggregation, we have enabled a more inclusive federated ecosystem. Future research will focus on adaptive proximal weights and dynamic rank scheduling to further optimize the communication-performance trade-off.
