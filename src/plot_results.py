@@ -2,18 +2,54 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import os
 import numpy as np
-import glob
-import torch
+import re
 
-def plot_comprehensive_results(results_dir="results", checkpoint_dir="checkpoints"):
+def parse_log_for_history(log_path):
+    with open(log_path, 'r') as f:
+        content = f.read()
+    
+    # Split by Alpha
+    alpha_blocks = re.split(r'Starting Alpha: ', content)[1:]
+    
+    history = {} # history[alpha][method] = list of metrics
+    
+    for block in alpha_blocks:
+        lines = block.split('\n')
+        alpha = lines[0].strip()
+        history[alpha] = {}
+        
+        # Split by Method
+        method_blocks = re.split(r'--- Method: ', block)[1:]
+        for m_block in method_blocks:
+            m_lines = m_block.split('\n')
+            method = m_lines[0].strip()
+            history[alpha][method] = []
+            
+            # Find Round lines
+            for line in m_lines:
+                if line.startswith("Round "):
+                    # Round 5 - Acc: 0.8546, F1: 0.8538, Loss: 0.4099, Comm: 46.00MB, Bias: 0.037139
+                    match = re.search(r'Round (\d+) - Acc: ([\d.]+), F1: ([\d.]+), Loss: ([\d.]+), Comm: ([\d.]+)MB, Bias: ([\d.]+)', line)
+                    if match:
+                        history[alpha][method].append({
+                            "round": int(match.group(1)),
+                            "acc": float(match.group(2)),
+                            "f1": float(match.group(3)),
+                            "loss": float(match.group(4)),
+                            "comm_mb": float(match.group(5)),
+                            "bias": float(match.group(6))
+                        })
+    return history
+
+def plot_comprehensive_results(results_dir="results", log_path="logs/full_experiment.log"):
     # 1. Load the final summary results
     summary_path = os.path.join(results_dir, "final_results.csv")
     if not os.path.exists(summary_path):
-        print("Final results summary not found. Attempting to aggregate from checkpoints...")
-        # (Wait for experiment to finish or aggregate partial results if needed)
+        print("Final results summary not found.")
         return
     
     df = pd.read_csv(summary_path)
+    history = parse_log_for_history(log_path)
     
     # Set professional style
     plt.style.use('seaborn-v0_8-paper')
@@ -44,29 +80,20 @@ def plot_comprehensive_results(results_dir="results", checkpoint_dir="checkpoint
     plt.close()
 
     # --------------------------------------------------
-    # Plot 2: Learning Curves (Accuracy vs Rounds) from Checkpoints
+    # Plot 2: Learning Curves (Accuracy vs Rounds) from Log
     # --------------------------------------------------
-    # This requires reading metrics_history from the latest checkpoint of each method
-    plt.figure(figsize=(10, 6))
-    for alpha in alphas:
-        plt.subplot(1, len(alphas), alphas.index(alpha) + 1)
-        for method in methods:
-            # Find the latest checkpoint for this method and alpha
-            ckpt_files = glob.glob(os.path.join(checkpoint_dir, f"{method}_alpha{alpha}_round*.pt"))
-            if not ckpt_files: continue
+    plt.figure(figsize=(12, 5))
+    for idx, alpha_key in enumerate(history.keys()):
+        plt.subplot(1, 3, idx + 1)
+        for method, hist in history[alpha_key].items():
+            if not hist: continue
+            rounds = [h['round'] for h in hist]
+            accs = [h['acc'] for h in hist]
+            plt.plot(rounds, accs, marker='o', label=method)
             
-            # Sort by round
-            ckpt_files.sort(key=lambda x: int(x.split('round')[-1].split('.pt')[0]))
-            latest_ckpt = torch.load(ckpt_files[-1], map_location='cpu', weights_only=False)
-            history = latest_ckpt['metrics']
-            
-            rounds = [h['round'] for h in history]
-            accs = [h['acc'] for h in history]
-            plt.plot(rounds, accs, marker='o', label=f"{method}")
-            
-        plt.title(f"Alpha={alpha}")
+        plt.title(f"Alpha={alpha_key}")
         plt.xlabel("Global Round")
-        if alphas.index(alpha) == 0: plt.ylabel("Accuracy")
+        if idx == 0: plt.ylabel("Accuracy")
         plt.legend()
         
     plt.suptitle("Federated Learning Convergence with FedProx & Dropout")
@@ -75,26 +102,22 @@ def plot_comprehensive_results(results_dir="results", checkpoint_dir="checkpoint
     plt.close()
 
     # --------------------------------------------------
-    # Plot 3: Communication Breakdown
+    # Plot 3: Communication Volume (Cumulative)
     # --------------------------------------------------
     plt.figure(figsize=(8, 6))
-    for i, method in enumerate(methods):
-        ckpt_files = glob.glob(os.path.join(checkpoint_dir, f"{method}_alpha{alphas[0]}_round*.pt"))
-        if not ckpt_files: continue
-        latest_ckpt = torch.load(ckpt_files[-1], map_location='cpu', weights_only=False)
-        comm = latest_ckpt['comm_logs'][-1]
-        
-        categories = ['LoRA A', 'LoRA B', 'Head']
-        values = [comm['lora_a_mb'], comm['lora_b_mb'], comm['head_mb']]
-        
-        plt.bar(method.upper(), comm['cumulative_mb'], label=method)
+    alpha_ref = list(history.keys())[0]
+    for method, hist in history[alpha_ref].items():
+        if not hist: continue
+        # Cumulative communication for the last round
+        total_comm = sum(h['comm_mb'] for h in hist)
+        plt.bar(method.upper(), total_comm, label=method)
         
     plt.ylabel("Total Comm Volume (MB)")
-    plt.title("Cumulative Communication Cost Breakdown")
+    plt.title("Cumulative Communication Cost (5 Rounds)")
     plt.savefig(os.path.join(results_dir, 'comm_breakdown.png'), dpi=300)
     plt.close()
 
-    print("Comprehensive plots generated in results/ directory.")
+    print("Comprehensive plots regenerated from logs/ directory.")
 
 if __name__ == "__main__":
     plot_comprehensive_results()
