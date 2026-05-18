@@ -117,6 +117,45 @@ def plot_comprehensive_results(results_dir="results", log_path="logs/full_experi
     plt.savefig(os.path.join(results_dir, 'comm_breakdown.png'), dpi=300)
     plt.close()
 
+    # --------------------------------------------------
+    # Plot 4: Aggregation Bias vs Global Communication Rounds
+    # --------------------------------------------------
+    plt.figure(figsize=(10, 6))
+    for method, hist in history[alpha_ref].items():
+        if not hist: continue
+        rounds = [h['round'] for h in hist]
+        biases = [h['bias'] for h in hist]
+        plt.plot(rounds, biases, marker='o', label=method.upper())
+        
+    plt.ylabel("Mean Aggregation Bias")
+    plt.xlabel("Global Round")
+    plt.title("Aggregation Bias vs. Global Communication Rounds (Alpha=10.0)")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(os.path.join(results_dir, 'bias_curves.png'), dpi=300)
+    plt.close()
+
+    # --------------------------------------------------
+    # Plot 5: Label Distribution Matrix
+    # --------------------------------------------------
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+    for i, alpha_val in enumerate(alphas):
+        dist_path = os.path.join(results_dir, f"label_dist_alpha{alpha_val}.csv")
+        if os.path.exists(dist_path):
+            dist_df = pd.read_csv(dist_path, index_col=0)
+            dist_df.plot(kind='bar', stacked=True, ax=axes[i], legend=(i==2))
+            axes[i].set_title(f"Alpha = {alpha_val}")
+            axes[i].set_xlabel("Client ID")
+            if i == 0:
+                axes[i].set_ylabel("Number of Samples")
+            if i == 2:
+                axes[i].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    
+    plt.suptitle("Client Label Distribution Matrix")
+    plt.tight_layout()
+    plt.savefig(os.path.join(results_dir, 'label_distribution.png'), dpi=300)
+    plt.close()
+
     print("Comprehensive plots regenerated from logs/ directory.")
 
 if __name__ == "__main__":
