@@ -53,5 +53,8 @@ For a detailed mathematical framework and analysis, please refer to:
 - [Chinese Research Report (Markdown)](docs/report_zh.md)
 - [Verification Guide (SUMMARY.md)](SUMMARY.md)
 
+
+## AI Tool aid
+* Gemini CLI
 ## License
 This project is licensed under the MIT License.
