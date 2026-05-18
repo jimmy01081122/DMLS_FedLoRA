@@ -591,7 +591,7 @@ def save_checkpoint(method, alpha, round_idx, global_state, metrics, comm_logs, 
     torch.save(checkpoint, ckpt_path)
 
 def load_checkpoint(path):
-    return torch.load(path)
+    return torch.load(path, weights_only=False)
 
 # ==================================================
 # PHASE 17 & 18: EXPERIMENT LOOP

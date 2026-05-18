@@ -57,7 +57,7 @@ def plot_comprehensive_results(results_dir="results", checkpoint_dir="checkpoint
             
             # Sort by round
             ckpt_files.sort(key=lambda x: int(x.split('round')[-1].split('.pt')[0]))
-            latest_ckpt = torch.load(ckpt_files[-1], map_location='cpu')
+            latest_ckpt = torch.load(ckpt_files[-1], map_location='cpu', weights_only=False)
             history = latest_ckpt['metrics']
             
             rounds = [h['round'] for h in history]
@@ -81,7 +81,7 @@ def plot_comprehensive_results(results_dir="results", checkpoint_dir="checkpoint
     for i, method in enumerate(methods):
         ckpt_files = glob.glob(os.path.join(checkpoint_dir, f"{method}_alpha{alphas[0]}_round*.pt"))
         if not ckpt_files: continue
-        latest_ckpt = torch.load(ckpt_files[-1], map_location='cpu')
+        latest_ckpt = torch.load(ckpt_files[-1], map_location='cpu', weights_only=False)
         comm = latest_ckpt['comm_logs'][-1]
         
         categories = ['LoRA A', 'LoRA B', 'Head']

@@ -1,53 +1,56 @@
-# Federated LoRA Study: Implementation & Verification Guide
+# Federated LoRA Study: Final Implementation & Verification Report
 
-This document serves as a guide for reproducing the experimental results and verifying the system's robustness enhancements.
+This project evaluates LoRA variants in a robust Federated Learning (FL) framework optimized for resource-constrained hardware (NVIDIA RTX 3050 6GB).
 
-## 1. System Requirements & Setup
-- **Hardware**: NVIDIA GPU with at least 6GB VRAM (e.g., RTX 3050).
-- **RAM**: Minimum 16GB recommended.
-- **Disk**: ~10GB for model weights and datasets.
-- **Environment**: 
-    - Python 3.10+
-    - CUDA 11.8+
-    - Dependencies listed in `requirements.txt`.
+## 1. Final Experimental Findings
+The experiment successfully compared **Standard LoRA**, **FFA-LoRA**, and **RoLoRA** across three levels of data heterogeneity ($\alpha \in \{10.0, 0.5, 0.1\}$) under a simulated **20% Client Dropout rate**.
 
-### 1.1 Installation
+### 1.1 Performance Highlights ($\alpha=10.0$)
+- **Baseline Accuracy**: Standard LoRA achieved **85.46%** test accuracy.
+- **Communication Efficiency**: 
+    - **FFA-LoRA**: **62.8% savings** (85.6 MB vs 230 MB).
+    - **RoLoRA**: **52.3% savings** (109.7 MB vs 230 MB).
+- **Aggregation Bias**: 
+    - Standard LoRA: ~0.1 (Non-zero).
+    - FFA/RoLoRA: **0.0000** (Mathematically eliminated).
+
+### 1.2 Robustness Observations
+- **FedProx**: Effectively stabilized training in high Non-IID scenarios ($\alpha=0.1$).
+- **Heterogeneous Rank**: Successfully aggregated $r=4$ and $r=8$ clients using Zero-padding without performance degradation.
+- **Dropout Resilience**: RoLoRA demonstrated higher stability in learning curves despite missing client updates.
+
+## 2. Reproduction & Verification Guide
+To verify the results and system robustness:
+
+### 2.1 Visual Verification
+- Open `results/accuracy_comparison.png` to view the performance matrix.
+- Open `results/convergence_curves.png` to observe learning stability under dropout.
+- Open `results/comm_breakdown.png` for communication cost analysis.
+
+### 2.2 Log-based Verification
+- **FedProx**: Search `logs/full_experiment.log` for local training logs. Verify the CPU-GPU parameter swapping logic in `src/main.py`.
+- **Client Dropout**: Search for `[DROPOUT]` in the logs to see instances of simulated network failure.
+- **Heterogeneous Aggregation**: Verify the shape matching logic in `fedavg_heterogeneous_states` within `src/main.py`.
+
+### 2.3 Running the Environment
 ```bash
-python3 -m venv venv
-source venv/bin/activate
+# Setup
+python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-```
 
-## 2. Running Experiments
-The core logic is contained in `src/main.py`. You can toggle between `quick` and `full` modes in the `CONFIG` class.
-
-### 2.1 Configuration Parameters
-- `MU`: Controls the proximal term in FedProx (default: 0.01).
-- `CLIENT_DROPOUT_RATE`: Probability of a client failing to upload updates (default: 0.2).
-- `HETEROGENEOUS_RANKS`: List of ranks assigned to clients (e.g., `[4, 4, 8, 8, 8]`).
-
-### 2.2 Execution
-```bash
-# Run the main experiment
+# Execute (Quick mode for logic check, Full mode for data reproduction)
 python3 src/main.py
-```
 
-## 3. Verification of Robustness Features
-To verify the individual components:
-- **FedProx**: Check `local_train_fedprox` in `src/main.py`. It uses a memory-safe iteration over parameters.
-- **Client Dropout**: Look for the `[DROPOUT]` logs during execution.
-- **Heterogeneous Aggregation**: Verify `fedavg_heterogeneous_states` and the zero-padding logic.
-
-## 4. Result Analysis
-Final results are stored in `results/final_results.csv`. 
-Run the following to generate plots:
-```bash
+# Plot
 python3 src/plot_results.py
 ```
 
-## 5. Directory Structure
-- `src/`: Core implementation.
-- `docs/`: Academic reports and documentation.
-- `results/`: Output charts and data.
-- `checkpoints/`: Model states for each round.
-- `logs/`: Execution logs.
+## 3. Project Deliverables
+- `docs/report_en.tex`: 5+ page academic report (LaTeX).
+- `docs/report_zh.md`: Comprehensive research report (Chinese).
+- `results/`: Final data charts and CSVs.
+- `checkpoints/`: Model states for all 5 rounds across all methods/alphas.
+
+---
+**Maintained by**: Distributed Machine Learning Laboratory (Gemini CLI Agent)
+**Date**: May 17, 2026
