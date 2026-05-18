@@ -5,14 +5,15 @@ This project evaluates LoRA variants in a robust Federated Learning (FL) framewo
 ## 1. Final Experimental Findings
 The experiment successfully compared **Standard LoRA**, **FFA-LoRA**, and **RoLoRA** across three levels of data heterogeneity ($\alpha \in \{10.0, 0.5, 0.1\}$) under a simulated **20% Client Dropout rate**.
 
-### 1.1 Performance Highlights ($\alpha=10.0$)
+### 1.1 Performance Highlights (Alpha=10.0)
 - **Baseline Accuracy**: Standard LoRA achieved **85.46%** test accuracy.
 - **Communication Efficiency**: 
     - **FFA-LoRA**: **62.8% savings** (85.6 MB vs 230 MB).
     - **RoLoRA**: **52.3% savings** (109.7 MB vs 230 MB).
 - **Aggregation Bias**: 
     - Standard LoRA: ~0.1 (Non-zero).
-    - FFA/RoLoRA: **0.0000** (Mathematically eliminated).
+    - FFA/RoLoRA: **0.0000** (Zero Bias).
+    - **Reasoning**: In FFA and RoLoRA, at least one LoRA matrix (A or B) is frozen during each aggregation round. This makes the product delta W = BA linear with respect to the updated parameters, allowing the average of products to equal the product of averages.
 
 ### 1.3 The Non-IID Challenge
 - **Observation**: Accuracy drops significantly when $\alpha \le 0.5$.

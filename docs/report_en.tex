@@ -44,6 +44,21 @@ Let $W_0 \in \mathbb{R}^{k \times d}$ be the frozen weights of the base model. T
 \subsubsection{Aggregation Bias Elimination}
 A significant finding in our previous work is the presence of aggregation bias in Standard LoRA. When aggregating $B_i A_i$, the FedAvg operation $\frac{1}{K} \sum B_i A_i$ is not equivalent to the global product $(\frac{1}{K} \sum B_i)(\frac{1}{K} \sum A_i)$. This non-linear error can be eliminated by freezing one of the matrices (e.g., FFA-LoRA) or alternating updates (e.g., RoLoRA), effectively linearizing the aggregation step.
 
+\subsubsection{Mathematical Proof of Zero Aggregation Bias}
+The aggregation bias arises from the non-linearity of the LoRA product $\Delta W = BA$. In Standard LoRA, where both $A$ and $B$ are updated, the FedAvg result $(\frac{1}{K} \sum B_i)(\frac{1}{K} \sum A_i)$ is not equal to the ideal average $\frac{1}{K} \sum (B_i A_i)$.
+
+In \textbf{FFA-LoRA}, $A$ is kept frozen as $A_{global}$. The updates are:
+\begin{equation}
+    W_{ideal} = \frac{1}{K} \sum (B_i A_{global}) = \left(\frac{1}{K} \sum B_i\right) A_{global} = W_{fedavg}
+\end{equation}
+Since the expression is linear with respect to $B$, the bias is exactly zero.
+
+In \textbf{RoLoRA}, in any given round, either $A$ or $B$ is frozen. If $B$ is frozen ($B_i = B_{global}$):
+\begin{equation}
+    W_{ideal} = \frac{1}{K} \sum (B_{global} A_i) = B_{global} \left(\frac{1}{K} \sum A_i\right) = W_{fedavg}
+\end{equation}
+By alternating the frozen matrix, RoLoRA maintains zero aggregation bias in every round while allowing both matrices to learn over time.
+
 \subsubsection{FedProx Integration}
 To handle extreme Non-IID distributions ($\alpha=0.1$), we implement the FedProx objective for each client $k$:
 \begin{equation}

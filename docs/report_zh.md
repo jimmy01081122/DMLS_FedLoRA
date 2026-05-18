@@ -12,10 +12,16 @@
 3. **設備異質性 (Hardware Heterogeneity)**：不同設備的運算能力不同，無法統一使用相同的 LoRA Rank。
 
 ## 2. 相關技術與理論
-### 2.1 LoRA 與聯邦聚合偏差
-LoRA 通過更新低秩矩陣 $A$ 與 $B$ 來逼近權重更新 $\Delta W = BA$。在聯邦聚合中，Standard LoRA 同時聚合 $A$ 與 $B$，這會產生二階非線性項的偏差：
-$$ \text{Avg}(B_i A_i) \neq \text{Avg}(B_i) \text{Avg}(A_i) $$
-本研究採用的 FFA-LoRA 與 RoLoRA 通過固定單側權重，從理論上消除了此偏差。
+### 2.1 LoRA 與聯邦聚合偏差的線性化證明
+LoRA 通過更新低秩矩陣 $A$ 與 $B$ 來逼近權重更新 $\Delta W = BA$。在聯邦聚合中，Standard LoRA 同時聚合 $A$ 與 $B$，這會產生二階非線性項的偏差。
+
+**FFA-LoRA (Frozen-A)**：由於 $A$ 矩陣在每一輪都被固定為全域權重 $A_{global}$，更新僅發生在 $B$：
+$$ \text{Avg}(B_i A_{global}) = \text{Avg}(B_i) A_{global} $$
+由於 $A$ 是常數，分配律成立，聚合完全線性，偏差恆為 **0**。
+
+**RoLoRA (Rotating)**：每一輪交替固定 $A$ 或 $B$。假設本輪固定 $B$：
+$$ \text{Avg}(B_{global} A_i) = B_{global} \text{Avg}(A_i) $$
+同理，聚合依然保持線性。通過每輪交替固定單側，RoLoRA 在每一輪聚合時均能維持 **0 偏差**，同時在長期訓練中保留了對雙側權重的優化能力。
 
 ### 2.2 FedProx 正則化
 為了解決 Non-IID 帶來的偏移，我們引入了 FedProx 的近端項（Proximal Term），在本地損失函數中加入對全球模型權重的 L2 懲罰：
