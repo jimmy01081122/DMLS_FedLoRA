@@ -1,6 +1,6 @@
 # Federated LoRA: Robust Fine-tuning in Heterogeneous Networks
 - Instructor: Cheng-Fu Chou
-- Class : NTU DMLS
+- Class : NTU DMLS (CSIE 5319)
 - Year : 2026 Spring
 
 
